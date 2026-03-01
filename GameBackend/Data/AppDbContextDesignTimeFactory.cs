@@ -1,4 +1,4 @@
-using Microsoft.EntityFrameworkCore;
+﻿using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Design;
 
 namespace GameBackend.Data;
@@ -12,7 +12,9 @@ public sealed class AppDbContextDesignTimeFactory : IDesignTimeDbContextFactory<
         var connectionString = Environment.GetEnvironmentVariable("GAMEBACKEND_MIGRATIONS_CONNECTION")
                                ?? "Host=localhost;Port=5432;Database=postgres;Username=postgres;Password=postgres;SslMode=Disable";
 
-        optionsBuilder.UseNpgsql(connectionString);
+        optionsBuilder
+            .UseNpgsql(connectionString)
+            .UseSnakeCaseNamingConvention();
 
         return new AppDbContext(optionsBuilder.Options);
     }

@@ -1,5 +1,4 @@
-using Amazon;
-using GameBackend.Infrastructure;
+﻿using GameBackend.Infrastructure;
 using GameBackend.Options;
 using Npgsql;
 
@@ -10,10 +9,6 @@ public static class DsqlAuthenticationExtensions
     public static void AddDsqlNpgsqlDataSource(this IHostApplicationBuilder builder, string connectionName)
     {
         var dsqlOptions = builder.Configuration.GetSection(DsqlOptions.SectionName).Get<DsqlOptions>() ?? new DsqlOptions();
-
-        // AWS 서명 시 클라이언트 시간이 서버 시간보다 빠를 경우를 대비해 시간을 1분 늦춥니다.
-        AWSConfigs.ManualClockCorrection = TimeSpan.FromMinutes(-1);
-
         var clusterEndpoint = ResolveClusterEndpoint(builder.Configuration, dsqlOptions);
 
         if (string.IsNullOrWhiteSpace(clusterEndpoint))

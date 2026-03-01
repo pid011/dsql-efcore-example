@@ -1,4 +1,4 @@
-using GameBackend.Data;
+﻿using GameBackend.Data;
 using GameBackend.Extensions;
 using GameBackend.Models;
 using GameBackend.Options;
@@ -13,7 +13,12 @@ builder.Services.Configure<DsqlOptions>(builder.Configuration.GetSection(DsqlOpt
 builder.Services.AddDbContextPool<AppDbContext>((serviceProvider, dbContextOptionsBuilder) =>
 {
     var dataSource = serviceProvider.GetRequiredService<NpgsqlDataSource>();
-    dbContextOptionsBuilder.UseNpgsql(dataSource);
+    dbContextOptionsBuilder
+        .UseNpgsql(dataSource, npgsql =>
+        {
+            npgsql.MigrationsHistoryTable("schema_versions");
+        })
+        .UseSnakeCaseNamingConvention();
 });
 builder.Services.AddOpenApi();
 
