@@ -1,0 +1,13 @@
+﻿---
+Resources:
+  GameBackendDB:
+    Type: AWS::DSQL::Cluster
+    Properties:
+      DeletionProtectionEnabled: false
+      Tags:
+        - Key: Name
+          Value: gamebackend-db
+
+Outputs:
+  GameBackendDsqlClusterEndpoint:
+    Value: !GetAtt GameBackendDB.Endpoint
