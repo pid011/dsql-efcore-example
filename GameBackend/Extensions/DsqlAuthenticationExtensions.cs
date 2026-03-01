@@ -14,31 +14,25 @@ public static class DsqlAuthenticationExtensions
         // AWS 서명 시 클라이언트 시간이 서버 시간보다 빠를 경우를 대비해 시간을 1분 늦춥니다.
         AWSConfigs.ManualClockCorrection = TimeSpan.FromMinutes(-1);
 
-        string? clusterEndpoint = builder.Configuration["GAMEBACKEND_DSQL_CLUSTER_ENDPOINT"];
+        var clusterEndpoint = ResolveClusterEndpoint(builder.Configuration, dsqlOptions);
+
         if (string.IsNullOrWhiteSpace(clusterEndpoint))
         {
-            var connectionString = builder.Configuration.GetConnectionString(connectionName);
-            if (!string.IsNullOrWhiteSpace(connectionString))
-            {
-                clusterEndpoint = new NpgsqlConnectionStringBuilder(connectionString).Host;
-            }
+            throw new InvalidOperationException(
+                "DSQL 클러스터 엔드포인트가 없습니다. AppHost DSQL 참조(AWS:Resources:GameBackendDsqlClusterEndpoint) 또는 Dsql:ClusterEndpoint를 설정해 주세요.");
         }
 
-        var isDsqlEndpoint = !string.IsNullOrWhiteSpace(clusterEndpoint) &&
-                             clusterEndpoint.Contains("dsql", StringComparison.OrdinalIgnoreCase);
-        var tokenProvider = isDsqlEndpoint
-            ? new DsqlAuthTokenProvider(clusterEndpoint!, dsqlOptions)
-            : null;
+        if (!clusterEndpoint.Contains("dsql", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException($"'{clusterEndpoint}'는 DSQL 엔드포인트 형식이 아닙니다.");
+        }
+
+        var tokenProvider = new DsqlAuthTokenProvider(clusterEndpoint, dsqlOptions);
 
         builder.AddNpgsqlDataSource(connectionName,
             settings =>
             {
-                settings.DisableHealthChecks = isDsqlEndpoint;
-
-                if (!isDsqlEndpoint)
-                {
-                    return;
-                }
+                settings.DisableHealthChecks = true;
 
                 // DSQL + IAM password provider 조합에서는 Password를 직접 주입하지 않습니다.
                 var connectionBuilder = new NpgsqlConnectionStringBuilder
@@ -58,27 +52,56 @@ public static class DsqlAuthenticationExtensions
             },
             configureDataSourceBuilder: dataSourceBuilder =>
             {
-                var host = dataSourceBuilder.ConnectionStringBuilder.Host;
-                if (string.IsNullOrWhiteSpace(host) || !host.Contains("dsql", StringComparison.OrdinalIgnoreCase))
-                {
-                    return;
-                }
-
                 // DSQL은 DISCARD ALL 명령을 지원하지 않습니다.
                 dataSourceBuilder.ConnectionStringBuilder.NoResetOnClose = true;
 
                 dataSourceBuilder.UsePeriodicPasswordProvider(
-                    async (_, cancellationToken) =>
-                    {
-                        if (tokenProvider is null)
-                        {
-                            throw new InvalidOperationException("DSQL 토큰 공급자가 구성되지 않았습니다.");
-                        }
-
-                        return await tokenProvider.GetTokenAsync(cancellationToken);
-                    },
+                    async (_, cancellationToken) => await tokenProvider.GetTokenAsync(cancellationToken),
                     TimeSpan.FromMinutes(Math.Max(dsqlOptions.TokenRefreshMinutes, 1)),
                     TimeSpan.FromSeconds(60));
             });
+    }
+
+    private static string? ResolveClusterEndpoint(IConfiguration configuration, DsqlOptions dsqlOptions)
+    {
+        var clusterEndpoint = configuration["GAMEBACKEND_DSQL_CLUSTER_ENDPOINT"];
+        if (!string.IsNullOrWhiteSpace(clusterEndpoint))
+        {
+            return clusterEndpoint;
+        }
+
+        clusterEndpoint = configuration["AWS:Resources:GameBackendDsqlClusterEndpoint"];
+        if (!string.IsNullOrWhiteSpace(clusterEndpoint))
+        {
+            return clusterEndpoint;
+        }
+
+        clusterEndpoint = configuration["AWS:Resources:gamebackend-dsql-cluster:GameBackendDsqlClusterEndpoint"];
+        if (!string.IsNullOrWhiteSpace(clusterEndpoint))
+        {
+            return clusterEndpoint;
+        }
+
+        clusterEndpoint = configuration.AsEnumerable()
+            .Where(x => x.Key.StartsWith("AWS:Resources:", StringComparison.OrdinalIgnoreCase))
+            .Where(x => x.Key.EndsWith(":GameBackendDsqlClusterEndpoint", StringComparison.OrdinalIgnoreCase))
+            .Select(x => x.Value)
+            .FirstOrDefault(x => !string.IsNullOrWhiteSpace(x));
+        if (!string.IsNullOrWhiteSpace(clusterEndpoint))
+        {
+            return clusterEndpoint;
+        }
+
+        clusterEndpoint = configuration.AsEnumerable()
+            .Where(x => x.Key.StartsWith("AWS:Resources:", StringComparison.OrdinalIgnoreCase))
+            .Select(x => x.Value)
+            .FirstOrDefault(x => !string.IsNullOrWhiteSpace(x) &&
+                                 x.Contains(".dsql.", StringComparison.OrdinalIgnoreCase));
+        if (!string.IsNullOrWhiteSpace(clusterEndpoint))
+        {
+            return clusterEndpoint;
+        }
+
+        return dsqlOptions.ClusterEndpoint;
     }
 }

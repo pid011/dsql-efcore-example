@@ -1,19 +1,24 @@
-﻿using GameBackend.Data;
-using GameBackend.Extensions;
+using GameBackend.Data;
 using GameBackend.Models;
-using GameBackend.Options;
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
 
 var builder = WebApplication.CreateBuilder(args);
 
 builder.AddServiceDefaults();
-builder.AddDsqlNpgsqlDataSource("gamebackenddb");
-builder.Services.Configure<DsqlOptions>(builder.Configuration.GetSection(DsqlOptions.SectionName));
-builder.Services.AddDbContextPool<AppDbContext>((serviceProvider, dbContextOptionsBuilder) =>
+// DSQL 경로는 임시 비활성화 상태입니다.
+// AppHost에서 주입되는 외부 PostgreSQL 연결 문자열을 사용합니다.
+var connectionString = builder.Configuration.GetConnectionString("gamebackenddb")
+    ?? throw new InvalidOperationException("ConnectionStrings:gamebackenddb 설정이 필요합니다.");
+
+var connectionStringBuilder = new NpgsqlConnectionStringBuilder(connectionString)
 {
-    var dataSource = serviceProvider.GetRequiredService<NpgsqlDataSource>();
-    dbContextOptionsBuilder.UseNpgsql(dataSource);
+    MaxPoolSize = 10
+};
+
+builder.Services.AddDbContextPool<AppDbContext>(dbContextOptionsBuilder =>
+{
+    dbContextOptionsBuilder.UseNpgsql(connectionStringBuilder.ConnectionString);
 });
 builder.Services.AddOpenApi();
 
@@ -242,3 +247,4 @@ record UpdatePlayerStatRequest(
     int Rating,
     int HighestRating,
     DateTime? LastMatchAt);
+

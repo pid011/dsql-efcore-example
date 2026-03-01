@@ -1,35 +1,14 @@
-using Amazon;
+﻿var builder = DistributedApplication.CreateBuilder(args);
 
-var builder = DistributedApplication.CreateBuilder(args);
+// DSQL 경로는 임시 비활성화 상태입니다.
+// 외부 PostgreSQL 연결 문자열(ConnectionStrings:gamebackenddb)을 사용합니다.
+var postgres = builder.AddConnectionString("gamebackenddb");
 
-var awsRegion = builder.Configuration["AWS:Region"] ?? "us-east-1";
-var awsProfile = builder.Configuration["AWS:Profile"];
+//var migrations = builder.AddProject<Projects.GameBackend_Migrations>("gamebackend-migrations")
+//    .WithReference(postgres);
 
-var awsConfig = builder.AddAWSSDKConfig()
-    .WithRegion(RegionEndpoint.GetBySystemName(awsRegion));
-
-if (!string.IsNullOrWhiteSpace(awsProfile))
-{
-    awsConfig.WithProfile(awsProfile);
-}
-
-var awsResources = builder
-    .AddAWSCloudFormationTemplate("aws-resources", "app-resources.template", stackName: "gamebackend-local-dev")
-    .WithReference(awsConfig);
-
-var postgres = builder.AddPostgres("postgres");
-var gameBackendDb = postgres.AddDatabase("gamebackenddb");
-
-var backend = builder.AddProject<Projects.GameBackend>("backend")
-    .WaitFor(awsResources)
-    .WithReference(awsResources)
-    .WithReference(gameBackendDb)
-    .WithEnvironment("GAMEBACKEND_DSQL_CLUSTER_ENDPOINT", awsResources.GetOutput("GameBackendDsqlClusterEndpoint"))
-    .WithEnvironment("AWS_REGION", awsConfig.Region!.SystemName);
-
-if (!string.IsNullOrWhiteSpace(awsConfig.Profile))
-{
-    backend.WithEnvironment("AWS_PROFILE", awsConfig.Profile);
-}
+builder.AddProject<Projects.GameBackend>("backend")
+    //.WaitForCompletion(migrations)
+    .WithReference(postgres);
 
 builder.Build().Run();

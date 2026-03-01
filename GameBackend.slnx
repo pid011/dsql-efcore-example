@@ -1,5 +1,6 @@
 <Solution>
   <Project Path="GameBackend.AppHost/GameBackend.AppHost.csproj" />
+  <Project Path="GameBackend.Migrations/GameBackend.Migrations.csproj" />
   <Project Path="GameBackend.ServiceDefaults/GameBackend.ServiceDefaults.csproj" />
   <Project Path="GameBackend/GameBackend.csproj" />
 </Solution>

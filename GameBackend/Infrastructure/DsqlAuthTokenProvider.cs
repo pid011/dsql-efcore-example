@@ -48,10 +48,10 @@ internal sealed class DsqlAuthTokenProvider(string endpoint, DsqlOptions options
 
     private static string ResolveRegion(string configuredRegion)
     {
-        var region = configuredRegion;
+        var region = Environment.GetEnvironmentVariable("AWS_REGION") ?? string.Empty;
         if (string.IsNullOrWhiteSpace(region))
         {
-            region = Environment.GetEnvironmentVariable("AWS_REGION") ?? string.Empty;
+            region = configuredRegion;
         }
 
         if (string.IsNullOrWhiteSpace(region))

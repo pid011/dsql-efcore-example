@@ -51,11 +51,6 @@ namespace GameBackend.Data.Migrations
                     table.PrimaryKey("PK_PlayerStats", x => x.PlayerId);
                 });
 
-            migrationBuilder.CreateIndex(
-                name: "IX_PlayerStats_PlayerId",
-                table: "PlayerStats",
-                column: "PlayerId",
-                unique: true);
         }
 
         /// <inheritdoc />

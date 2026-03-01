@@ -97,9 +97,6 @@ namespace GameBackend.Data.Migrations
 
                     b.HasKey("PlayerId");
 
-                    b.HasIndex("PlayerId")
-                        .IsUnique();
-
                     b.ToTable("PlayerStats");
                 });
 #pragma warning restore 612, 618

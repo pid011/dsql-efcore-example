@@ -4,6 +4,8 @@ public sealed class DsqlOptions
 {
     public const string SectionName = "Dsql";
 
+    public string ClusterEndpoint { get; set; } = string.Empty;
+
     public string Region { get; set; } = string.Empty;
 
     public int TokenRefreshMinutes { get; set; } = 12;
