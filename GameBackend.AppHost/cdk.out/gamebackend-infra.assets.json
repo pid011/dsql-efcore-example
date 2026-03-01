@@ -1,0 +1,20 @@
+{
+  "version": "48.0.0",
+  "files": {
+    "05f865282fc225ea46f8e961a5e3897ebd7d9b84cb04f145f387bbdeef290727": {
+      "displayName": "gamebackend-infra Template",
+      "source": {
+        "path": "gamebackend-infra.template.json",
+        "packaging": "file"
+      },
+      "destinations": {
+        "current_account-current_region-060b9a04": {
+          "bucketName": "cdk-hnb659fds-assets-${AWS::AccountId}-${AWS::Region}",
+          "objectKey": "05f865282fc225ea46f8e961a5e3897ebd7d9b84cb04f145f387bbdeef290727.json",
+          "assumeRoleArn": "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/cdk-hnb659fds-file-publishing-role-${AWS::AccountId}-${AWS::Region}"
+        }
+      }
+    }
+  },
+  "dockerImages": {}
+}

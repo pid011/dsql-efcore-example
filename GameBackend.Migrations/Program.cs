@@ -1,31 +1,55 @@
-using GameBackend.Data;
+﻿using GameBackend.Data;
+using GameBackend.Extensions;
+using GameBackend.Options;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Configuration;
+using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Npgsql;
 
 var builder = Host.CreateApplicationBuilder(args);
 
-// DSQL 경로는 임시 비활성화 상태입니다.
-// AppHost에서 주입되는 외부 PostgreSQL 연결 문자열을 사용합니다.
-var connectionString = builder.Configuration.GetConnectionString("gamebackenddb")
-    ?? throw new InvalidOperationException("ConnectionStrings:gamebackenddb 설정이 필요합니다.");
-
-var connectionStringBuilder = new NpgsqlConnectionStringBuilder(connectionString)
+builder.AddDsqlNpgsqlDataSource("gamebackenddb");
+builder.Services.Configure<DsqlOptions>(builder.Configuration.GetSection(DsqlOptions.SectionName));
+builder.Services.AddDbContextPool<AppDbContext>((serviceProvider, dbContextOptionsBuilder) =>
 {
-    MaxPoolSize = 10
-};
-
-builder.Services.AddDbContextPool<AppDbContext>(dbContextOptionsBuilder =>
-{
-    dbContextOptionsBuilder.UseNpgsql(connectionStringBuilder.ConnectionString);
+    var dataSource = serviceProvider.GetRequiredService<NpgsqlDataSource>();
+    dbContextOptionsBuilder.UseNpgsql(dataSource);
 });
 
 using var host = builder.Build();
 using var scope = host.Services.CreateScope();
 
 var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-await dbContext.Database.MigrateAsync();
+await Migrate(dbContext);
 
 Console.WriteLine("GameBackend database migration completed.");
+
+static async Task Migrate(AppDbContext dbContext)
+{
+    var pendingMigrations = (await dbContext.Database.GetPendingMigrationsAsync()).ToList();
+    if (pendingMigrations.Count == 0)
+    {
+        return;
+    }
+
+    var appliedMigrations = (await dbContext.Database.GetAppliedMigrationsAsync()).ToList();
+    var migrator = dbContext.GetService<IMigrator>();
+    var fromMigration = appliedMigrations.LastOrDefault() ?? "0";
+
+    foreach (var targetMigration in pendingMigrations)
+    {
+        var script = migrator.GenerateScript(
+            fromMigration: fromMigration,
+            toMigration: targetMigration,
+            options: MigrationsSqlGenerationOptions.NoTransactions);
+
+        if (!string.IsNullOrWhiteSpace(script))
+        {
+            await dbContext.Database.ExecuteSqlRawAsync(script);
+        }
+
+        fromMigration = targetMigration;
+    }
+}

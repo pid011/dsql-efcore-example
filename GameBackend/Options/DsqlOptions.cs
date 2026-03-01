@@ -8,7 +8,7 @@ public sealed class DsqlOptions
 
     public string Region { get; set; } = string.Empty;
 
-    public int TokenRefreshMinutes { get; set; } = 12;
+    public int TokenRefreshMinutes { get; set; } = 1;
 
     public int TokenExpiryMinutes { get; set; } = 15;
 

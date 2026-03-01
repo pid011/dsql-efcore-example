@@ -1,14 +1,65 @@
-﻿var builder = DistributedApplication.CreateBuilder(args);
+using Amazon;
+using Amazon.CDK;
+using Amazon.CDK.AWS.DSQL;
 
-// DSQL 경로는 임시 비활성화 상태입니다.
-// 외부 PostgreSQL 연결 문자열(ConnectionStrings:gamebackenddb)을 사용합니다.
-var postgres = builder.AddConnectionString("gamebackenddb");
+#pragma warning disable ASPIREAWSPUBLISHERS001
 
-//var migrations = builder.AddProject<Projects.GameBackend_Migrations>("gamebackend-migrations")
-//    .WithReference(postgres);
+var builder = DistributedApplication.CreateBuilder(args);
 
-builder.AddProject<Projects.GameBackend>("backend")
-    //.WaitForCompletion(migrations)
-    .WithReference(postgres);
+var awsRegion = builder.Configuration["AWS:Region"] ?? "us-east-1";
+var awsProfile = builder.Configuration["AWS:Profile"];
+
+var awsConfig = builder.AddAWSSDKConfig()
+    .WithRegion(RegionEndpoint.GetBySystemName(awsRegion));
+
+if (!string.IsNullOrWhiteSpace(awsProfile))
+{
+    awsConfig.WithProfile(awsProfile);
+}
+
+builder.AddAWSCDKEnvironment(
+    name: "GameBackend",
+    cdkDefaultsProviderFactory: Aspire.Hosting.AWS.Deployment.CDKDefaultsProviderFactory.Preview_V1);
+
+var infraStack = builder.AddAWSCDKStack("gamebackend-infra")
+    .WithReference(awsConfig);
+
+var dsqlCluster = infraStack.AddConstruct(
+    "gamebackend-dsql-cluster",
+    scope => new CfnCluster(scope, "GameBackendDsqlCluster", new CfnClusterProps
+    {
+        DeletionProtectionEnabled = false,
+        Tags =
+        [
+            new CfnTag
+            {
+                Key = "Name",
+                Value = "gamebackend-local-dev-dsql-cluster"
+            }
+        ]
+    }));
+
+var migrations = builder.AddProject<Projects.GameBackend_Migrations>("gamebackend-migrations")
+    .WaitFor(infraStack)
+    .WithReference(awsConfig)
+    .WithReference(dsqlCluster, cluster => cluster.AttrEndpoint, "GameBackendDsqlClusterEndpoint")
+    .WithEnvironment("AWS_REGION", awsRegion);
+
+if (!string.IsNullOrWhiteSpace(awsConfig.Profile))
+{
+    migrations.WithEnvironment("AWS_PROFILE", awsConfig.Profile);
+}
+
+var backend = builder.AddProject<Projects.GameBackend>("backend")
+    .WaitFor(infraStack)
+    .WaitForCompletion(migrations)
+    .WithReference(awsConfig)
+    .WithReference(dsqlCluster, cluster => cluster.AttrEndpoint, "GameBackendDsqlClusterEndpoint")
+    .WithEnvironment("AWS_REGION", awsRegion);
+
+if (!string.IsNullOrWhiteSpace(awsConfig.Profile))
+{
+    backend.WithEnvironment("AWS_PROFILE", awsConfig.Profile);
+}
 
 builder.Build().Run();
