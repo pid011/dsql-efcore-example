@@ -47,7 +47,7 @@ app.MapPost("/players", async (CreatePlayerRequest request, GameDbContext dbCont
     {
         return Results.ValidationProblem(new Dictionary<string, string[]>
         {
-            ["name"] = ["Name은 1자 이상 100자 이하여야 합니다."]
+            ["name"] = ["Name must be between 1 and 100 characters."]
         });
     }
 
@@ -67,7 +67,7 @@ app.MapPost("/players", async (CreatePlayerRequest request, GameDbContext dbCont
     }
     catch (DbUpdateException ex) when (ex.InnerException is PostgresException { SqlState: PostgresErrorCodes.UniqueViolation, ConstraintName: "ux_players_name" })
     {
-        return Results.Conflict(new { message = "이미 사용 중인 이름입니다." });
+        return Results.Conflict(new { message = "Name is already in use." });
     }
     catch (DbUpdateException ex)
     {
@@ -129,7 +129,7 @@ app.MapPost("/players/{id:guid}/match-results",
         {
             return Results.ValidationProblem(new Dictionary<string, string[]>
             {
-                ["matchResult"] = ["matchResult는 Win, Loss, Draw 중 하나여야 합니다."]
+                ["matchResult"] = ["matchResult must be one of Win, Loss, or Draw."]
             });
         }
 
@@ -152,7 +152,7 @@ app.MapPost("/players/{id:guid}/match-results",
             dbContext.PlayerStats.Add(stat);
         }
 
-        // 기본 통계 업데이트
+        // Update basic stats
         stat.MatchesPlayed++;
         stat.TotalKills += request.Kills;
         stat.TotalDeaths += request.Deaths;
@@ -161,7 +161,7 @@ app.MapPost("/players/{id:guid}/match-results",
         stat.LastMatchAt = now;
         stat.UpdatedAt = now;
 
-        // 승/패/무 및 스트릭
+        // Win/Loss/Draw and streak
         switch (request.MatchResult)
         {
             case MatchResult.Win:
@@ -180,7 +180,7 @@ app.MapPost("/players/{id:guid}/match-results",
                 break;
         }
 
-        // Elo 레이팅 계산 (K=32, 상대 레이팅 = 본인 레이팅으로 간소화)
+        // Elo rating calculation (K=32, simplified with opponent rating = own rating)
         const int kFactor = 32;
         double actualScore = request.MatchResult switch
         {
@@ -188,7 +188,7 @@ app.MapPost("/players/{id:guid}/match-results",
             MatchResult.Loss => 0.0,
             _ => 0.5
         };
-        // 상대 레이팅 = 본인 레이팅이므로 expected = 0.5
+        // Opponent rating = own rating, so expected = 0.5
         const double expectedScore = 0.5;
         int ratingDelta = (int)Math.Round(kFactor * (actualScore - expectedScore));
         stat.Rating = Math.Max(0, stat.Rating + ratingDelta);

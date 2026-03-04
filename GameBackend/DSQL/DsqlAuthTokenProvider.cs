@@ -53,7 +53,7 @@ internal sealed class DsqlAuthTokenProvider(string endpoint, DsqlOptions options
 
         if (string.IsNullOrWhiteSpace(region))
         {
-            throw new InvalidOperationException("AWS Region이 설정되지 않았습니다. Dsql:Region 또는 AWS_REGION을 설정해 주세요.");
+            throw new InvalidOperationException("AWS Region is not configured. Set Dsql:Region or AWS_REGION.");
         }
 
         return region;
@@ -67,7 +67,7 @@ internal sealed class DsqlAuthTokenProvider(string endpoint, DsqlOptions options
             var profileStore = new Amazon.Runtime.CredentialManagement.CredentialProfileStoreChain();
             if (!profileStore.TryGetAWSCredentials(profile, out var profileCredentials))
             {
-                throw new InvalidOperationException($"AWS profile '{profile}'를 찾을 수 없습니다.");
+                throw new InvalidOperationException($"AWS profile '{profile}' not found.");
             }
 
             return profileCredentials;

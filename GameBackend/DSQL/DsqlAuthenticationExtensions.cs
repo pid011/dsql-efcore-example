@@ -13,12 +13,12 @@ public static class DsqlAuthenticationExtensions
         if (string.IsNullOrWhiteSpace(clusterEndpoint))
         {
             throw new InvalidOperationException(
-                "DSQL 클러스터 엔드포인트가 없습니다. AppHost DSQL 참조(AWS:Resources:GameBackendDsqlClusterEndpoint) 또는 Dsql:ClusterEndpoint를 설정해 주세요.");
+                "DSQL cluster endpoint is missing. Set the AppHost DSQL reference (AWS:Resources:GameBackendDsqlClusterEndpoint) or Dsql:ClusterEndpoint.");
         }
 
         if (!clusterEndpoint.Contains("dsql", StringComparison.OrdinalIgnoreCase))
         {
-            throw new InvalidOperationException($"'{clusterEndpoint}'는 DSQL 엔드포인트 형식이 아닙니다.");
+            throw new InvalidOperationException($"'{clusterEndpoint}' is not a valid DSQL endpoint.");
         }
 
         var tokenProvider = new DsqlAuthTokenProvider(clusterEndpoint, dsqlOptions);
@@ -28,7 +28,7 @@ public static class DsqlAuthenticationExtensions
             {
                 settings.DisableHealthChecks = true;
 
-                // DSQL + IAM password provider 조합에서는 Password를 직접 주입하지 않습니다.
+                // Password is not set directly; IAM auth token provider handles it.
                 var connectionBuilder = new NpgsqlConnectionStringBuilder
                 {
                     Host = clusterEndpoint,
@@ -46,7 +46,7 @@ public static class DsqlAuthenticationExtensions
             },
             configureDataSourceBuilder: dataSourceBuilder =>
             {
-                // DSQL은 DISCARD ALL 명령을 지원하지 않습니다.
+                // DSQL does not support the DISCARD ALL command.
                 dataSourceBuilder.ConnectionStringBuilder.NoResetOnClose = true;
 
                 dataSourceBuilder.UsePeriodicPasswordProvider(

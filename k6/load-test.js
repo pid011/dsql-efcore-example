@@ -141,7 +141,7 @@ function submitMatchResult(playerId) {
 }
 
 export default function () {
-  // 1. 플레이어 생성
+  // 1. Create player
   const player = createPlayer();
   if (!player) {
     sleep(1);
@@ -150,21 +150,21 @@ export default function () {
 
   sleep(0.5);
 
-  // 2. 플레이어 목록 조회
+  // 2. List players
   listPlayers();
   sleep(0.3);
 
-  // 3. 단일 플레이어 조회
+  // 3. Get single player
   getPlayer(player.id);
   sleep(0.3);
 
-  // 4. 매치 결과 3회 제출
+  // 4. Submit 3 match results
   for (let i = 0; i < 3; i++) {
     submitMatchResult(player.id);
     sleep(0.2);
   }
 
-  // 5. 프로필 조회 (스탯 포함)
+  // 5. Get profile (with stats)
   getPlayerProfile(player.id);
   sleep(0.5);
 }
