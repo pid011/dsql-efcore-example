@@ -55,7 +55,12 @@ var backend = builder.AddProject<Projects.GameBackend>("backend")
     .WaitForCompletion(migrations)
     .WithReference(awsConfig)
     .WithReference(dsqlCluster, cluster => cluster.AttrEndpoint, "GameBackendDsqlClusterEndpoint")
-    .WithEnvironment("AWS_REGION", awsRegion);
+    .WithEnvironment("AWS_REGION", awsRegion)
+    .WithUrlForEndpoint("https", url =>
+    {
+        url.DisplayText = "Swagger";
+        url.Url += "/swagger";
+    });
 
 if (!string.IsNullOrWhiteSpace(awsConfig.Profile))
 {

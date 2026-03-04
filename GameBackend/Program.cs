@@ -1,4 +1,5 @@
-﻿using GameBackend;
+﻿using System.Text.Json.Serialization;
+using GameBackend;
 using GameBackend.DSQL;
 using GameBackend.Models;
 using GameBackend.Options;
@@ -6,6 +7,11 @@ using Microsoft.EntityFrameworkCore;
 using Npgsql;
 
 var builder = WebApplication.CreateBuilder(args);
+
+builder.Services.ConfigureHttpJsonOptions(options =>
+{
+    options.SerializerOptions.Converters.Add(new JsonStringEnumConverter());
+});
 
 builder.AddServiceDefaults();
 builder.AddDsqlNpgsqlDataSource("gamebackenddb");
@@ -26,6 +32,10 @@ app.MapDefaultEndpoints();
 if (app.Environment.IsDevelopment())
 {
     app.MapOpenApi();
+    app.UseSwaggerUI(options =>
+    {
+        options.SwaggerEndpoint("/openapi/v1.json", "GameBackend API");
+    });
 }
 
 app.UseHttpsRedirection();
@@ -44,14 +54,25 @@ app.MapPost("/players", async (CreatePlayerRequest request, GameDbContext dbCont
     var now = DateTime.UtcNow;
     var player = new Player
     {
-        Id = Guid.NewGuid(),
         Name = trimmedName,
         CreatedAt = now,
         UpdatedAt = now
     };
 
     dbContext.Players.Add(player);
-    await dbContext.SaveChangesAsync(cancellationToken);
+
+    try
+    {
+        await dbContext.SaveChangesAsync(cancellationToken);
+    }
+    catch (DbUpdateException ex) when (ex.InnerException is PostgresException { SqlState: PostgresErrorCodes.UniqueViolation, ConstraintName: "ux_players_name" })
+    {
+        return Results.Conflict(new { message = "이미 사용 중인 이름입니다." });
+    }
+    catch (DbUpdateException ex)
+    {
+        return Results.Problem(detail: ex.Message, statusCode: 500);
+    }
 
     return Results.Created($"/players/{player.Id}", ToPlayerResponse(player));
 });

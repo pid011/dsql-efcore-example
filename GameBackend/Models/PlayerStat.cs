@@ -1,9 +1,10 @@
-﻿using System.ComponentModel.DataAnnotations.Schema;
+﻿using System.ComponentModel.DataAnnotations;
 
 namespace GameBackend.Models;
 
 public sealed class PlayerStat
 {
+    [Key]
     public Guid PlayerId { get; set; }
 
     public int MatchesPlayed { get; set; }
