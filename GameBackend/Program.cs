@@ -1,5 +1,5 @@
-﻿using GameBackend.Data;
-using GameBackend.Extensions;
+﻿using GameBackend;
+using GameBackend.DSQL;
 using GameBackend.Models;
 using GameBackend.Options;
 using Microsoft.EntityFrameworkCore;
@@ -10,14 +10,11 @@ var builder = WebApplication.CreateBuilder(args);
 builder.AddServiceDefaults();
 builder.AddDsqlNpgsqlDataSource("gamebackenddb");
 builder.Services.Configure<DsqlOptions>(builder.Configuration.GetSection(DsqlOptions.SectionName));
-builder.Services.AddDbContextPool<AppDbContext>((serviceProvider, dbContextOptionsBuilder) =>
+builder.Services.AddDbContextPool<GameDbContext>((serviceProvider, dbContextOptionsBuilder) =>
 {
     var dataSource = serviceProvider.GetRequiredService<NpgsqlDataSource>();
     dbContextOptionsBuilder
-        .UseNpgsql(dataSource, npgsql =>
-        {
-            npgsql.MigrationsHistoryTable("schema_versions");
-        })
+        .UseNpgsql(dataSource)
         .UseSnakeCaseNamingConvention();
 });
 builder.Services.AddOpenApi();
@@ -33,7 +30,7 @@ if (app.Environment.IsDevelopment())
 
 app.UseHttpsRedirection();
 
-app.MapPost("/players", async (CreatePlayerRequest request, AppDbContext dbContext, CancellationToken cancellationToken) =>
+app.MapPost("/players", async (CreatePlayerRequest request, GameDbContext dbContext, CancellationToken cancellationToken) =>
 {
     var trimmedName = request.Name.Trim();
     if (trimmedName.Length is 0 or > 100)
@@ -59,7 +56,7 @@ app.MapPost("/players", async (CreatePlayerRequest request, AppDbContext dbConte
     return Results.Created($"/players/{player.Id}", ToPlayerResponse(player));
 });
 
-app.MapGet("/players", async (AppDbContext dbContext, CancellationToken cancellationToken) =>
+app.MapGet("/players", async (GameDbContext dbContext, CancellationToken cancellationToken) =>
 {
     var players = await dbContext.Players
         .AsNoTracking()
@@ -70,7 +67,7 @@ app.MapGet("/players", async (AppDbContext dbContext, CancellationToken cancella
     return Results.Ok(players);
 });
 
-app.MapGet("/players/{id:guid}", async (Guid id, AppDbContext dbContext, CancellationToken cancellationToken) =>
+app.MapGet("/players/{id:guid}", async (Guid id, GameDbContext dbContext, CancellationToken cancellationToken) =>
 {
     var player = await dbContext.Players
         .AsNoTracking()
@@ -79,7 +76,7 @@ app.MapGet("/players/{id:guid}", async (Guid id, AppDbContext dbContext, Cancell
     return player is null ? Results.NotFound() : Results.Ok(ToPlayerResponse(player));
 });
 
-app.MapGet("/players/{id:guid}/profile", async (Guid id, AppDbContext dbContext, CancellationToken cancellationToken) =>
+app.MapGet("/players/{id:guid}/profile", async (Guid id, GameDbContext dbContext, CancellationToken cancellationToken) =>
 {
     var result = await dbContext.Players
         .AsNoTracking()
@@ -102,114 +99,129 @@ app.MapGet("/players/{id:guid}/profile", async (Guid id, AppDbContext dbContext,
     return Results.Ok(response);
 });
 
-app.MapPut("/players/{id:guid}/stats", async (Guid id, UpdatePlayerStatRequest request, AppDbContext dbContext, CancellationToken cancellationToken) =>
-{
-    var playerExists = await dbContext.Players
-        .AsNoTracking()
-        .AnyAsync(current => current.Id == id, cancellationToken);
 
-    if (!playerExists)
+
+app.MapPost("/players/{id:guid}/match-results",
+    async (Guid id, SubmitMatchResultRequest request, GameDbContext dbContext, CancellationToken cancellationToken) =>
     {
-        return Results.NotFound();
-    }
-
-    var validationErrors = new Dictionary<string, string[]>();
-
-    if (request.MatchesPlayed < 0 ||
-        request.Wins < 0 ||
-        request.Losses < 0 ||
-        request.Draws < 0 ||
-        request.CurrentWinStreak < 0 ||
-        request.BestWinStreak < 0 ||
-        request.TotalKills < 0 ||
-        request.TotalDeaths < 0 ||
-        request.TotalAssists < 0 ||
-        request.TotalScore < 0 ||
-        request.Rating < 0 ||
-        request.HighestRating < 0)
-    {
-        validationErrors["stats"] = ["수치 데이터는 0 이상이어야 합니다."];
-    }
-
-    if (request.Wins + request.Losses + request.Draws > request.MatchesPlayed)
-    {
-        validationErrors["results"] = ["Wins + Losses + Draws는 MatchesPlayed를 초과할 수 없습니다."];
-    }
-
-    if (request.HighestRating < request.Rating)
-    {
-        validationErrors["rating"] = ["HighestRating은 Rating 이상이어야 합니다."];
-    }
-
-    if (validationErrors.Count > 0)
-    {
-        return Results.ValidationProblem(validationErrors);
-    }
-
-    var now = DateTime.UtcNow;
-    var playerStat = await dbContext.PlayerStats
-        .FirstOrDefaultAsync(current => current.PlayerId == id, cancellationToken);
-
-    if (playerStat is null)
-    {
-        playerStat = new PlayerStat
+        if (!Enum.IsDefined(request.MatchResult))
         {
-            PlayerId = id,
-            CreatedAt = now
+            return Results.ValidationProblem(new Dictionary<string, string[]>
+            {
+                ["matchResult"] = ["matchResult는 Win, Loss, Draw 중 하나여야 합니다."]
+            });
+        }
+
+        var playerExists = await dbContext.Players
+            .AnyAsync(p => p.Id == id, cancellationToken);
+
+        if (!playerExists)
+        {
+            return Results.NotFound();
+        }
+
+        var stat = await dbContext.PlayerStats
+            .FirstOrDefaultAsync(s => s.PlayerId == id, cancellationToken);
+
+        var now = DateTime.UtcNow;
+
+        if (stat is null)
+        {
+            stat = new PlayerStat { PlayerId = id, CreatedAt = now };
+            dbContext.PlayerStats.Add(stat);
+        }
+
+        // 기본 통계 업데이트
+        stat.MatchesPlayed++;
+        stat.TotalKills += request.Kills;
+        stat.TotalDeaths += request.Deaths;
+        stat.TotalAssists += request.Assists;
+        stat.TotalScore += request.Score;
+        stat.LastMatchAt = now;
+        stat.UpdatedAt = now;
+
+        // 승/패/무 및 스트릭
+        switch (request.MatchResult)
+        {
+            case MatchResult.Win:
+                stat.Wins++;
+                stat.CurrentWinStreak++;
+                if (stat.CurrentWinStreak > stat.BestWinStreak)
+                    stat.BestWinStreak = stat.CurrentWinStreak;
+                break;
+            case MatchResult.Loss:
+                stat.Losses++;
+                stat.CurrentWinStreak = 0;
+                break;
+            case MatchResult.Draw:
+                stat.Draws++;
+                stat.CurrentWinStreak = 0;
+                break;
+        }
+
+        // Elo 레이팅 계산 (K=32, 상대 레이팅 = 본인 레이팅으로 간소화)
+        const int kFactor = 32;
+        double actualScore = request.MatchResult switch
+        {
+            MatchResult.Win => 1.0,
+            MatchResult.Loss => 0.0,
+            _ => 0.5
         };
+        // 상대 레이팅 = 본인 레이팅이므로 expected = 0.5
+        const double expectedScore = 0.5;
+        int ratingDelta = (int)Math.Round(kFactor * (actualScore - expectedScore));
+        stat.Rating = Math.Max(0, stat.Rating + ratingDelta);
 
-        dbContext.PlayerStats.Add(playerStat);
-    }
+        if (stat.Rating > stat.HighestRating)
+            stat.HighestRating = stat.Rating;
 
-    playerStat.MatchesPlayed = request.MatchesPlayed;
-    playerStat.Wins = request.Wins;
-    playerStat.Losses = request.Losses;
-    playerStat.Draws = request.Draws;
-    playerStat.CurrentWinStreak = request.CurrentWinStreak;
-    playerStat.BestWinStreak = request.BestWinStreak;
-    playerStat.TotalKills = request.TotalKills;
-    playerStat.TotalDeaths = request.TotalDeaths;
-    playerStat.TotalAssists = request.TotalAssists;
-    playerStat.TotalScore = request.TotalScore;
-    playerStat.Rating = request.Rating;
-    playerStat.HighestRating = request.HighestRating;
-    playerStat.LastMatchAt = request.LastMatchAt;
-    playerStat.UpdatedAt = now;
+        await dbContext.SaveChangesAsync(cancellationToken);
 
-    await dbContext.SaveChangesAsync(cancellationToken);
-
-    return Results.Ok(ToPlayerStatResponse(playerStat));
-});
+        return Results.Ok(ToPlayerStatResponse(stat));
+    });
 
 app.Run();
 
-static PlayerResponse ToPlayerResponse(Player player) =>
-    new(player.Id, player.Name, player.CreatedAt, player.UpdatedAt);
+static PlayerResponse ToPlayerResponse(Player player)
+{
+    return new(
+    player.Id,
+    player.Name,
+    player.CreatedAt,
+    player.UpdatedAt);
+}
 
-static PlayerStatResponse ToPlayerStatResponse(PlayerStat stat) =>
-    new(
-        stat.PlayerId,
-        stat.MatchesPlayed,
-        stat.Wins,
-        stat.Losses,
-        stat.Draws,
-        stat.CurrentWinStreak,
-        stat.BestWinStreak,
-        stat.TotalKills,
-        stat.TotalDeaths,
-        stat.TotalAssists,
-        stat.TotalScore,
-        stat.Rating,
-        stat.HighestRating,
-        stat.LastMatchAt,
-        stat.WinRate,
-        stat.Kda,
-        stat.CreatedAt,
-        stat.UpdatedAt);
+static PlayerStatResponse ToPlayerStatResponse(PlayerStat stat)
+{
+    return new(
+    stat.PlayerId,
+    stat.MatchesPlayed,
+    stat.Wins,
+    stat.Losses,
+    stat.Draws,
+    stat.CurrentWinStreak,
+    stat.BestWinStreak,
+    stat.TotalKills,
+    stat.TotalDeaths,
+    stat.TotalAssists,
+    stat.TotalScore,
+    stat.Rating,
+    stat.HighestRating,
+    stat.LastMatchAt,
+    stat.WinRate,
+    stat.KDA,
+    stat.CreatedAt,
+    stat.UpdatedAt);
+}
 
-record CreatePlayerRequest(string Name);
+record CreatePlayerRequest(
+    string Name);
 
-record PlayerResponse(Guid Id, string Name, DateTime CreatedAt, DateTime UpdatedAt);
+record PlayerResponse(
+    Guid Id,
+    string Name,
+    DateTime CreatedAt,
+    DateTime UpdatedAt);
 
 record PlayerStatResponse(
     Guid PlayerId,
@@ -231,20 +243,15 @@ record PlayerStatResponse(
     DateTime CreatedAt,
     DateTime UpdatedAt);
 
-record PlayerProfileResponse(PlayerResponse Player, PlayerStatResponse? Stat);
+record PlayerProfileResponse(
+    PlayerResponse Player,
+    PlayerStatResponse? Stat);
 
-record UpdatePlayerStatRequest(
-    int MatchesPlayed,
-    int Wins,
-    int Losses,
-    int Draws,
-    int CurrentWinStreak,
-    int BestWinStreak,
-    int TotalKills,
-    int TotalDeaths,
-    int TotalAssists,
-    int TotalScore,
-    int Rating,
-    int HighestRating,
-    DateTime? LastMatchAt);
+enum MatchResult { Win, Loss, Draw }
 
+record SubmitMatchResultRequest(
+    MatchResult MatchResult,
+    int Kills,
+    int Deaths,
+    int Assists,
+    int Score);

@@ -1,10 +1,11 @@
 using GameBackend.Models;
 using Microsoft.EntityFrameworkCore;
 
-namespace GameBackend.Data;
+namespace GameBackend;
 
-public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(options)
+public sealed class GameDbContext(DbContextOptions<GameDbContext> options) : DbContext(options)
 {
     public DbSet<Player> Players => Set<Player>();
     public DbSet<PlayerStat> PlayerStats => Set<PlayerStat>();
 }
+

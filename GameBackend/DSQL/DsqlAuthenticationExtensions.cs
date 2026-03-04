@@ -1,8 +1,7 @@
-﻿using GameBackend.Infrastructure;
-using GameBackend.Options;
+﻿using GameBackend.Options;
 using Npgsql;
 
-namespace GameBackend.Extensions;
+namespace GameBackend.DSQL;
 
 public static class DsqlAuthenticationExtensions
 {

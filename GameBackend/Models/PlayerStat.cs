@@ -1,12 +1,9 @@
-﻿using System.ComponentModel.DataAnnotations;
-using System.ComponentModel.DataAnnotations.Schema;
+﻿using System.ComponentModel.DataAnnotations.Schema;
 
 namespace GameBackend.Models;
 
 public sealed class PlayerStat
 {
-    [Key]
-    [Column(TypeName = "uuid")]
     public Guid PlayerId { get; set; }
 
     public int MatchesPlayed { get; set; }
@@ -39,13 +36,11 @@ public sealed class PlayerStat
 
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 
-    [NotMapped]
     public decimal WinRate => MatchesPlayed == 0
         ? 0
         : Math.Round((decimal)Wins / MatchesPlayed * 100, 2);
 
-    [NotMapped]
-    public decimal Kda => TotalDeaths == 0
+    public decimal KDA => TotalDeaths == 0
         ? TotalKills + TotalAssists
         : Math.Round((decimal)(TotalKills + TotalAssists) / TotalDeaths, 2);
 }

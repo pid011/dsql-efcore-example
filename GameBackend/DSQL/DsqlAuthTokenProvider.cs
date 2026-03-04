@@ -4,7 +4,7 @@ using Amazon.Runtime;
 using Amazon.Runtime.Credentials;
 using GameBackend.Options;
 
-namespace GameBackend.Infrastructure;
+namespace GameBackend.DSQL;
 
 internal sealed class DsqlAuthTokenProvider(string endpoint, DsqlOptions options)
 {
@@ -32,10 +32,7 @@ internal sealed class DsqlAuthTokenProvider(string endpoint, DsqlOptions options
             var region = RegionEndpoint.GetBySystemName(regionName);
             _credentials ??= await ResolveCredentialsAsync();
 
-            _cachedToken = await DSQLAuthTokenGenerator.GenerateDbConnectAdminAuthTokenAsync(
-                _credentials,
-                region,
-                endpoint);
+            _cachedToken = await DSQLAuthTokenGenerator.GenerateDbConnectAdminAuthTokenAsync(_credentials, region, endpoint);
 
             _cachedAt = DateTimeOffset.UtcNow;
             return _cachedToken;
@@ -56,8 +53,7 @@ internal sealed class DsqlAuthTokenProvider(string endpoint, DsqlOptions options
 
         if (string.IsNullOrWhiteSpace(region))
         {
-            throw new InvalidOperationException(
-                "AWS Region이 설정되지 않았습니다. Dsql:Region 또는 AWS_REGION을 설정해 주세요.");
+            throw new InvalidOperationException("AWS Region이 설정되지 않았습니다. Dsql:Region 또는 AWS_REGION을 설정해 주세요.");
         }
 
         return region;

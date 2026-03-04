@@ -1,0 +1,20 @@
+{
+    "sqltools.connections": [
+        {
+            "connectionMethod": "Server and Port",
+            "pgOptions": {
+                "ssl": {
+                    "rejectUnauthorized": true
+                }
+            },
+            "previewLimit": 50,
+            "port": 5432,
+            "database": "postgres",
+            "driver": "Aurora DSQL Driver for SQLTools",
+            "name": "gamebackend-local-dev-dsql-cluster",
+            "server": "7ftsumbxaoonjyhciey5ap4uiu.dsql.ap-northeast-2.on.aws",
+            "region": "ap-northeast-2",
+            "profile": "my-dev"
+        }
+    ]
+}
