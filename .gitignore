@@ -364,3 +364,6 @@ FodyWeavers.xsd
 
 # Local settings
 *.local.json
+
+# AWS CDK
+cdk.out/
