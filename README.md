@@ -36,11 +36,11 @@ Minimal API with the following endpoints:
 
 | Method | Path | Description |
 |---|---|---|
-| `POST` | `/players` | Create a player |
-| `GET` | `/players` | List all players |
-| `GET` | `/players/{id}` | Get a player by ID |
-| `GET` | `/players/{id}/profile` | Get player profile with stats |
-| `POST` | `/players/{id}/match-results` | Submit a match result (updates stats & Elo rating) |
+| `POST` | `/efcore/players` | Create a player |
+| `GET` | `/efcore/players` | List all players |
+| `GET` | `/efcore/players/{id}` | Get a player by ID |
+| `GET` | `/efcore/players/{id}/profile` | Get player profile with stats |
+| `POST` | `/efcore/players/{id}/match-results` | Submit a match result (updates stats & Elo rating) |
 
 Models:
 - **Player** — `id` (UUIDv7), `name`, `created_at`, `updated_at`

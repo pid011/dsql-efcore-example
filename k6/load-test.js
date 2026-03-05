@@ -58,10 +58,10 @@ function randomInt(min, max) {
   return Math.floor(Math.random() * (max - min + 1)) + min;
 }
 
-// POST /players
+// POST /efcore/players
 function createPlayer() {
   const payload = JSON.stringify({ name: randomName() });
-  const res = http.post(`${BASE_URL}/players`, payload, {
+  const res = http.post(`${BASE_URL}/efcore/players`, payload, {
     headers: JSON_HEADERS,
   });
   createPlayerDuration.add(res.timings.duration);
@@ -78,9 +78,9 @@ function createPlayer() {
   return ok ? res.json() : null;
 }
 
-// GET /players
+// GET /efcore/players
 function listPlayers() {
-  const res = http.get(`${BASE_URL}/players`);
+  const res = http.get(`${BASE_URL}/efcore/players`);
   listPlayersDuration.add(res.timings.duration);
 
   const ok = check(res, {
@@ -92,9 +92,9 @@ function listPlayers() {
   return ok ? res.json() : [];
 }
 
-// GET /players/{id}
+// GET /efcore/players/{id}
 function getPlayer(playerId) {
-  const res = http.get(`${BASE_URL}/players/${playerId}`);
+  const res = http.get(`${BASE_URL}/efcore/players/${playerId}`);
   getPlayerDuration.add(res.timings.duration);
 
   const ok = check(res, {
@@ -104,9 +104,9 @@ function getPlayer(playerId) {
   errorRate.add(!ok);
 }
 
-// GET /players/{id}/profile
+// GET /efcore/players/{id}/profile
 function getPlayerProfile(playerId) {
-  const res = http.get(`${BASE_URL}/players/${playerId}/profile`);
+  const res = http.get(`${BASE_URL}/efcore/players/${playerId}/profile`);
   getProfileDuration.add(res.timings.duration);
 
   const ok = check(res, {
@@ -116,7 +116,7 @@ function getPlayerProfile(playerId) {
   errorRate.add(!ok);
 }
 
-// POST /players/{id}/match-results
+// POST /efcore/players/{id}/match-results
 function submitMatchResult(playerId) {
   const payload = JSON.stringify({
     matchResult: randomMatchResult(),
@@ -127,7 +127,7 @@ function submitMatchResult(playerId) {
   });
 
   const res = http.post(
-    `${BASE_URL}/players/${playerId}/match-results`,
+    `${BASE_URL}/efcore/players/${playerId}/match-results`,
     payload,
     { headers: JSON_HEADERS }
   );
