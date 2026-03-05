@@ -37,15 +37,17 @@ Minimal API with the following endpoints:
 | Method | Path | Description |
 |---|---|---|
 | `POST` | `/efcore/players` | Create a player |
-| `POST` | `/efcore/reset` | Reset all player/player_stats data |
-| `GET` | `/efcore/players?limit=100` | List players with optional limit (1~1000) |
+| `POST` | `/efcore/reset` | Reset all game/player/player_stats data |
+| `GET` | `/efcore/players?limit=100&beforeCreatedAt=<ISO8601>&beforeId=<UUID>` | List players (default limit=100, max=200, keyset pagination) |
 | `GET` | `/efcore/players/{id}` | Get a player by ID |
 | `GET` | `/efcore/players/{id}/profile` | Get player profile with stats |
-| `POST` | `/efcore/players/{id}/match-results` | Submit a match result (updates stats & Elo rating) |
+| `POST` | `/efcore/game/create` | Create a new game session |
+| `POST` | `/efcore/game/end` | End a game and apply player results to stats atomically |
 
 Models:
 - **Player** — `id` (UUIDv7), `name`, `created_at`, `updated_at`
 - **PlayerStat** — match statistics, win/loss/draw, KDA, Elo rating (K=32, simplified)
+- **Game** — game lifecycle (`created` -> `ended`) with `started_at`/`ended_at`
 
 ### GameBackend.Migrations
 
@@ -140,10 +142,10 @@ k6 run -e BASE_URL=http://localhost:5074 -e LIST_LIMIT=100 k6/load-test-dapper.j
 ```
 
 The test runs two scenarios:
-- **Smoke** — 10 VUs for 45 seconds
-- **Load** — Ramps 0→40→100→150 VUs and holds each level (total 8 minutes)
+- **Smoke** — 5 VUs for 30 seconds
+- **Load** — Ramps 0→20→50→80 VUs and holds each level (shorter run)
 
-Each iteration creates a player, lists players (with `LIST_LIMIT`), fetches a player, submits 3 match results, and retrieves the player profile.
+Each iteration creates a player, lists players (with `LIST_LIMIT`), fetches a player, creates/ends 3 games with player results, and retrieves the player profile.
 
 ### Test Results
 

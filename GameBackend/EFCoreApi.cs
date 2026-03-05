@@ -1,5 +1,6 @@
-﻿using System.Data;
+using System.Data;
 using GameBackend.Models;
+using GameBackend.Players;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -9,6 +10,39 @@ namespace GameBackend;
 
 public static class EFCoreApi
 {
+    private const string DeletePlayerStatsBatchSql =
+        """
+        DELETE FROM player_stats
+        WHERE player_id IN (
+            SELECT player_id
+            FROM player_stats
+            ORDER BY player_id
+            LIMIT {0}
+        );
+        """;
+
+    private const string DeletePlayersBatchSql =
+        """
+        DELETE FROM players
+        WHERE id IN (
+            SELECT id
+            FROM players
+            ORDER BY id
+            LIMIT {0}
+        );
+        """;
+
+    private const string DeleteGamesBatchSql =
+        """
+        DELETE FROM games
+        WHERE id IN (
+            SELECT id
+            FROM games
+            ORDER BY id
+            LIMIT {0}
+        );
+        """;
+
     public static void ConfigureServices(IServiceCollection services)
     {
         services.AddDbContextPool<GameDbContext>((serviceProvider, dbContextOptionsBuilder) =>
@@ -24,260 +58,303 @@ public static class EFCoreApi
     {
         var efCoreApi = app.MapGroup("/efcore");
 
-        efCoreApi.MapPost("/players", async (CreatePlayerRequest request, GameDbContext dbContext, CancellationToken cancellationToken) =>
-        {
-            var trimmedName = request.Name.Trim();
-            if (trimmedName.Length is 0 or > 100)
+        efCoreApi.MapPost("/players",
+            async (CreatePlayerRequest request, GameDbContext dbContext, CancellationToken cancellationToken) =>
             {
-                return Results.ValidationProblem(new Dictionary<string, string[]>
+                var validationErrors = PlayerRequestValidator.ValidatePlayerName(request.Name, out var trimmedName);
+                if (validationErrors is not null)
                 {
-                    ["name"] = ["Name must be between 1 and 100 characters."]
-                });
-            }
+                    return Results.ValidationProblem(validationErrors);
+                }
 
+                var now = DateTime.UtcNow;
+                var player = new Player
+                {
+                    Name = trimmedName,
+                    CreatedAt = now,
+                    UpdatedAt = now
+                };
+
+                dbContext.Players.Add(player);
+
+                try
+                {
+                    await dbContext.SaveChangesAsync(cancellationToken);
+                }
+                catch (Exception ex) when (PostgresErrorClassifier.IsUniquePlayerNameViolation(ex))
+                {
+                    return Results.Conflict(new { message = "Name is already in use." });
+                }
+                catch (Exception ex) when (ex is DbUpdateException or PostgresException)
+                {
+                    return Results.Problem(detail: PostgresErrorClassifier.ToProblemDetail(ex), statusCode: 500);
+                }
+
+                return Results.Created($"/efcore/players/{player.Id}", PlayerResponseMapper.ToPlayerResponse(player));
+            });
+
+        efCoreApi.MapPost("/game/create", async (GameDbContext dbContext, CancellationToken cancellationToken) =>
+        {
             var now = DateTime.UtcNow;
-            var player = new Player
+            var game = new Game
             {
-                Name = trimmedName,
+                Status = GameStatus.Created,
+                StartedAt = now,
                 CreatedAt = now,
                 UpdatedAt = now
             };
 
-            dbContext.Players.Add(player);
+            dbContext.Games.Add(game);
 
             try
             {
                 await dbContext.SaveChangesAsync(cancellationToken);
             }
-            catch (DbUpdateException ex) when (ex.InnerException is PostgresException { SqlState: PostgresErrorCodes.UniqueViolation, ConstraintName: "ux_players_name" })
+            catch (Exception ex) when (ex is DbUpdateException or PostgresException)
             {
-                return Results.Conflict(new { message = "Name is already in use." });
-            }
-            catch (DbUpdateException ex)
-            {
-                return Results.Problem(detail: ex.Message, statusCode: 500);
+                return Results.Problem(detail: PostgresErrorClassifier.ToProblemDetail(ex), statusCode: 500);
             }
 
-            return Results.Created($"/efcore/players/{player.Id}", ToPlayerResponse(player));
+            return Results.Created($"/efcore/game/{game.Id}",
+                new CreateGameResponse(PlayerResponseMapper.ToGameResponse(game)));
         });
+
+        efCoreApi.MapPost("/game/end",
+            async (EndGameRequest request, GameDbContext dbContext, CancellationToken cancellationToken) =>
+            {
+                var validationErrors = PlayerRequestValidator.ValidateEndGameRequest(request);
+                if (validationErrors is not null)
+                {
+                    return Results.ValidationProblem(validationErrors);
+                }
+
+                var results = request.Results!;
+                var playerIds = results.Select(result => result.PlayerId).Distinct().ToArray();
+
+                try
+                {
+                    return await SerializationRetryPolicy.ExecuteAsync(async retryToken =>
+                    {
+                        var originalAutoSavepoints = dbContext.Database.AutoSavepointsEnabled;
+                        dbContext.Database.AutoSavepointsEnabled = false;
+                        await using var transaction =
+                            await dbContext.Database.BeginTransactionAsync(IsolationLevel.Snapshot, retryToken);
+
+                        try
+                        {
+                            var game = await dbContext.Games
+                                .FirstOrDefaultAsync(candidate => candidate.Id == request.GameId, retryToken);
+
+                            if (game is null)
+                            {
+                                await transaction.RollbackAsync(retryToken);
+                                return Results.NotFound();
+                            }
+
+                            if (game.EndedAt.HasValue || string.Equals(game.Status, GameStatus.Ended,
+                                    StringComparison.OrdinalIgnoreCase))
+                            {
+                                await transaction.RollbackAsync(retryToken);
+                                return Results.Conflict(new { message = "Game is already ended." });
+                            }
+
+                            var existingPlayerIds = await dbContext.Players
+                                .AsNoTracking()
+                                .Where(player => playerIds.Contains(player.Id))
+                                .Select(player => player.Id)
+                                .ToListAsync(retryToken);
+
+                            if (existingPlayerIds.Count != playerIds.Length)
+                            {
+                                var existingPlayerSet = existingPlayerIds.ToHashSet();
+                                var missingPlayerIds = playerIds
+                                    .Where(playerId => !existingPlayerSet.Contains(playerId))
+                                    .Select(playerId => playerId.ToString())
+                                    .ToArray();
+
+                                await transaction.RollbackAsync(retryToken);
+                                return Results.ValidationProblem(new Dictionary<string, string[]>
+                                {
+                                    ["results.playerId"] =
+                                        [$"Unknown playerId values: {string.Join(", ", missingPlayerIds)}"]
+                                });
+                            }
+
+                            var statsByPlayerId = await dbContext.PlayerStats
+                                .Where(stat => playerIds.Contains(stat.PlayerId))
+                                .ToDictionaryAsync(stat => stat.PlayerId, retryToken);
+
+                            var now = DateTime.UtcNow;
+                            var updatedStats = new Dictionary<Guid, PlayerStat>(playerIds.Length);
+
+                            foreach (var result in results)
+                            {
+                                if (!statsByPlayerId.TryGetValue(result.PlayerId, out var stat))
+                                {
+                                    stat = PlayerStatCalculator.CreateNew(result.PlayerId, now);
+                                    dbContext.PlayerStats.Add(stat);
+                                    statsByPlayerId[result.PlayerId] = stat;
+                                }
+
+                                PlayerStatCalculator.ApplyMatchResult(stat, result, now);
+                                updatedStats[result.PlayerId] = stat;
+                            }
+
+                            game.Status = GameStatus.Ended;
+                            game.EndedAt = now;
+                            game.UpdatedAt = now;
+
+                            await dbContext.SaveChangesAsync(retryToken);
+                            await transaction.CommitAsync(retryToken);
+
+                            var response = new EndGameResponse(
+                                PlayerResponseMapper.ToGameResponse(game),
+                                updatedStats.Values
+                                    .OrderBy(stat => stat.PlayerId)
+                                    .Select(PlayerResponseMapper.ToPlayerStatResponse)
+                                    .ToArray());
+
+                            return Results.Ok(response);
+                        }
+                        catch (Exception ex) when (PostgresErrorClassifier.IsSerializationFailure(ex))
+                        {
+                            await transaction.RollbackAsync(retryToken);
+                            dbContext.ChangeTracker.Clear();
+                            throw;
+                        }
+                        catch (Exception ex) when (ex is DbUpdateException or PostgresException)
+                        {
+                            await transaction.RollbackAsync(retryToken);
+                            return Results.Problem(detail: PostgresErrorClassifier.ToProblemDetail(ex),
+                                statusCode: 500);
+                        }
+                        finally
+                        {
+                            dbContext.Database.AutoSavepointsEnabled = originalAutoSavepoints;
+                        }
+                    }, cancellationToken);
+                }
+                catch (Exception ex) when (PostgresErrorClassifier.IsSerializationFailure(ex))
+                {
+                    return Results.StatusCode(StatusCodes.Status409Conflict);
+                }
+            });
 
         efCoreApi.MapPost("/reset", async (GameDbContext dbContext, CancellationToken cancellationToken) =>
         {
-            await using var transaction = await dbContext.Database.BeginTransactionAsync(IsolationLevel.Snapshot, cancellationToken);
-
             try
             {
-                await dbContext.Database.ExecuteSqlRawAsync("DELETE FROM player_stats;", cancellationToken);
-                await dbContext.Database.ExecuteSqlRawAsync("DELETE FROM players;", cancellationToken);
-                await transaction.CommitAsync(cancellationToken);
+                await BatchDeleteExecutor.ExecuteUntilEmptyAsync(
+                    ct => dbContext.Database.ExecuteSqlRawAsync(
+                        DeletePlayerStatsBatchSql,
+                        [PlayerApiConstants.ResetDeleteBatchSize],
+                        ct),
+                    cancellationToken);
+
+                await BatchDeleteExecutor.ExecuteUntilEmptyAsync(
+                    ct => dbContext.Database.ExecuteSqlRawAsync(
+                        DeletePlayersBatchSql,
+                        [PlayerApiConstants.ResetDeleteBatchSize],
+                        ct),
+                    cancellationToken);
+
+                await BatchDeleteExecutor.ExecuteUntilEmptyAsync(
+                    ct => dbContext.Database.ExecuteSqlRawAsync(
+                        DeleteGamesBatchSql,
+                        [PlayerApiConstants.ResetDeleteBatchSize],
+                        ct),
+                    cancellationToken);
+
                 return Results.NoContent();
             }
             catch (PostgresException ex)
             {
-                await transaction.RollbackAsync(cancellationToken);
-                return Results.Problem(detail: ex.MessageText, statusCode: 500);
+                return Results.Problem(detail: PostgresErrorClassifier.ToProblemDetail(ex), statusCode: 500);
             }
         });
 
-        efCoreApi.MapGet("/players", async (int? limit, GameDbContext dbContext, CancellationToken cancellationToken) =>
-        {
-            if (limit is <= 0 or > 1000)
+        efCoreApi.MapGet("/players",
+            async (int? limit, DateTime? beforeCreatedAt, Guid? beforeId, GameDbContext dbContext,
+                CancellationToken cancellationToken) =>
             {
-                return Results.ValidationProblem(new Dictionary<string, string[]>
+                var validationErrors =
+                    PlayerRequestValidator.ValidateListRequest(limit, beforeCreatedAt, beforeId,
+                        out var effectiveLimit);
+                if (validationErrors is not null)
                 {
-                    ["limit"] = ["limit must be between 1 and 1000."]
-                });
-            }
-
-            IQueryable<Player> query = dbContext.Players
-                .AsNoTracking()
-                .OrderByDescending(player => player.CreatedAt);
-
-            if (limit.HasValue)
-            {
-                query = query.Take(limit.Value);
-            }
-
-            var players = await query
-                .Select(player => new PlayerResponse(player.Id, player.Name, player.CreatedAt, player.UpdatedAt))
-                .ToListAsync(cancellationToken);
-
-            return Results.Ok(players);
-        });
-
-        efCoreApi.MapGet("/players/{id:guid}", async (Guid id, GameDbContext dbContext, CancellationToken cancellationToken) =>
-        {
-            var player = await dbContext.Players
-                .AsNoTracking()
-                .FirstOrDefaultAsync(player => player.Id == id, cancellationToken);
-
-            return player is null ? Results.NotFound() : Results.Ok(ToPlayerResponse(player));
-        });
-
-        efCoreApi.MapGet("/players/{id:guid}/profile", async (Guid id, GameDbContext dbContext, CancellationToken cancellationToken) =>
-        {
-            var result = await (
-                    from player in dbContext.Players.AsNoTracking()
-                    where player.Id == id
-                    join stat in dbContext.PlayerStats.AsNoTracking() on player.Id equals stat.PlayerId into statGroup
-                    from stat in statGroup.DefaultIfEmpty()
-                    select new { Player = player, Stat = stat })
-                .FirstOrDefaultAsync(cancellationToken);
-
-            if (result is null)
-            {
-                return Results.NotFound();
-            }
-
-            var response = new PlayerProfileResponse(
-                ToPlayerResponse(result.Player),
-                result.Stat is null ? null : ToPlayerStatResponse(result.Stat));
-            return Results.Ok(response);
-        });
-
-        efCoreApi.MapPost("/players/{id:guid}/match-results",
-            async (Guid id, SubmitMatchResultRequest request, GameDbContext dbContext, CancellationToken cancellationToken) =>
-            {
-                if (!Enum.IsDefined(request.MatchResult))
-                {
-                    return Results.ValidationProblem(new Dictionary<string, string[]>
-                    {
-                        ["matchResult"] = ["matchResult must be one of Win, Loss, or Draw."]
-                    });
+                    return Results.ValidationProblem(validationErrors);
                 }
 
-                var originalAutoSavepoints = dbContext.Database.AutoSavepointsEnabled;
-                dbContext.Database.AutoSavepointsEnabled = false;
-                await using var transaction = await dbContext.Database.BeginTransactionAsync(IsolationLevel.Snapshot, cancellationToken);
+                List<PlayerResponse> players;
 
-                try
+                if (beforeCreatedAt.HasValue)
                 {
-                    var playerExists = await dbContext.Players
-                        .AnyAsync(player => player.Id == id, cancellationToken);
-
-                    if (!playerExists)
-                    {
-                        await transaction.RollbackAsync(cancellationToken);
-                        return Results.NotFound();
-                    }
-
-                    var stat = await dbContext.PlayerStats
-                        .FirstOrDefaultAsync(playerStat => playerStat.PlayerId == id, cancellationToken);
-
-                    var now = DateTime.UtcNow;
-
-                    if (stat is null)
-                    {
-                        stat = new PlayerStat { PlayerId = id, CreatedAt = now };
-                        dbContext.PlayerStats.Add(stat);
-                    }
-
-                    stat.MatchesPlayed++;
-                    stat.TotalKills += request.Kills;
-                    stat.TotalDeaths += request.Deaths;
-                    stat.TotalAssists += request.Assists;
-                    stat.TotalScore += request.Score;
-                    stat.LastMatchAt = now;
-                    stat.UpdatedAt = now;
-
-                    switch (request.MatchResult)
-                    {
-                        case MatchResult.Win:
-                            stat.Wins++;
-                            stat.CurrentWinStreak++;
-                            if (stat.CurrentWinStreak > stat.BestWinStreak)
-                            {
-                                stat.BestWinStreak = stat.CurrentWinStreak;
-                            }
-
-                            break;
-                        case MatchResult.Loss:
-                            stat.Losses++;
-                            stat.CurrentWinStreak = 0;
-                            break;
-                        case MatchResult.Draw:
-                            stat.Draws++;
-                            stat.CurrentWinStreak = 0;
-                            break;
-                    }
-
-                    const int kFactor = 32;
-                    var actualScore = request.MatchResult switch
-                    {
-                        MatchResult.Win => 1.0,
-                        MatchResult.Loss => 0.0,
-                        _ => 0.5
-                    };
-                    const double expectedScore = 0.5;
-                    var ratingDelta = (int)Math.Round(kFactor * (actualScore - expectedScore));
-                    stat.Rating = Math.Max(0, stat.Rating + ratingDelta);
-
-                    if (stat.Rating > stat.HighestRating)
-                    {
-                        stat.HighestRating = stat.Rating;
-                    }
-
-                    await dbContext.SaveChangesAsync(cancellationToken);
-                    await transaction.CommitAsync(cancellationToken);
-
-                    return Results.Ok(ToPlayerStatResponse(stat));
+                    players = await dbContext.Players
+                        .AsNoTracking()
+                        .Where(player => player.CreatedAt < beforeCreatedAt.Value
+                                         || (player.CreatedAt == beforeCreatedAt.Value
+                                             && player.Id < beforeId!.Value))
+                        .OrderByDescending(player => player.CreatedAt)
+                        .ThenByDescending(player => player.Id)
+                        .Take(effectiveLimit)
+                        .Select(player => new PlayerResponse(
+                            player.Id,
+                            player.Name,
+                            player.CreatedAt,
+                            player.UpdatedAt))
+                        .ToListAsync(cancellationToken);
                 }
-                catch (DbUpdateException ex) when (ex.InnerException is PostgresException { SqlState: PostgresErrorCodes.SerializationFailure })
+                else
                 {
-                    await transaction.RollbackAsync(cancellationToken);
-                    return Results.StatusCode(StatusCodes.Status409Conflict);
+                    players = await dbContext.Players
+                        .AsNoTracking()
+                        .OrderByDescending(player => player.CreatedAt)
+                        .ThenByDescending(player => player.Id)
+                        .Take(effectiveLimit)
+                        .Select(player => new PlayerResponse(
+                            player.Id,
+                            player.Name,
+                            player.CreatedAt,
+                            player.UpdatedAt))
+                        .ToListAsync(cancellationToken);
                 }
-                catch (DbUpdateException ex)
-                {
-                    await transaction.RollbackAsync(cancellationToken);
-                    return Results.Problem(detail: ex.Message, statusCode: 500);
-                }
-                catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.SerializationFailure)
-                {
-                    await transaction.RollbackAsync(cancellationToken);
-                    return Results.StatusCode(StatusCodes.Status409Conflict);
-                }
-                catch (PostgresException ex)
-                {
-                    await transaction.RollbackAsync(cancellationToken);
-                    return Results.Problem(detail: ex.MessageText, statusCode: 500);
-                }
-                finally
-                {
-                    dbContext.Database.AutoSavepointsEnabled = originalAutoSavepoints;
-                }
+
+                return Results.Ok(players);
             });
-    }
 
-    private static PlayerResponse ToPlayerResponse(Player player)
-    {
-        return new(
-            player.Id,
-            player.Name,
-            player.CreatedAt,
-            player.UpdatedAt);
-    }
+        efCoreApi.MapGet("/players/{id:guid}",
+            async (Guid id, GameDbContext dbContext, CancellationToken cancellationToken) =>
+            {
+                var player = await dbContext.Players
+                    .AsNoTracking()
+                    .Where(player => player.Id == id)
+                    .Select(player => new PlayerResponse(
+                        player.Id,
+                        player.Name,
+                        player.CreatedAt,
+                        player.UpdatedAt))
+                    .FirstOrDefaultAsync(cancellationToken);
 
-    private static PlayerStatResponse ToPlayerStatResponse(PlayerStat stat)
-    {
-        return new(
-            stat.PlayerId,
-            stat.MatchesPlayed,
-            stat.Wins,
-            stat.Losses,
-            stat.Draws,
-            stat.CurrentWinStreak,
-            stat.BestWinStreak,
-            stat.TotalKills,
-            stat.TotalDeaths,
-            stat.TotalAssists,
-            stat.TotalScore,
-            stat.Rating,
-            stat.HighestRating,
-            stat.LastMatchAt,
-            stat.WinRate,
-            stat.KDA,
-            stat.CreatedAt,
-            stat.UpdatedAt);
+                return player is null ? Results.NotFound() : Results.Ok(player);
+            });
+
+        efCoreApi.MapGet("/players/{id:guid}/profile",
+            async (Guid id, GameDbContext dbContext, CancellationToken cancellationToken) =>
+            {
+                var profile = await (
+                        from player in dbContext.Players.AsNoTracking()
+                        where player.Id == id
+                        join stat in dbContext.PlayerStats.AsNoTracking() on player.Id equals stat.PlayerId into statGroup
+                        from stat in statGroup.DefaultIfEmpty()
+                        select new { player, stat })
+                    .FirstOrDefaultAsync(cancellationToken);
+
+                if (profile is null)
+                {
+                    return Results.NotFound();
+                }
+
+                return Results.Ok(PlayerResponseMapper.ToPlayerProfileResponse(profile.player, profile.stat));
+            });
     }
 }

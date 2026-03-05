@@ -1,4 +1,4 @@
-﻿namespace GameBackend;
+namespace GameBackend;
 
 public record CreatePlayerRequest(
     string Name);
@@ -33,16 +33,36 @@ public record PlayerProfileResponse(
     PlayerResponse Player,
     PlayerStatResponse? Stat);
 
+public record GameResponse(
+    Guid Id,
+    string Status,
+    DateTime StartedAt,
+    DateTime? EndedAt,
+    DateTime CreatedAt,
+    DateTime UpdatedAt);
+
+public record CreateGameResponse(
+    GameResponse Game);
+
+public record GamePlayerResultRequest(
+    Guid PlayerId,
+    MatchResult MatchResult,
+    int Kills,
+    int Deaths,
+    int Assists,
+    int Score);
+
+public record EndGameRequest(
+    Guid GameId,
+    IReadOnlyList<GamePlayerResultRequest>? Results);
+
+public record EndGameResponse(
+    GameResponse Game,
+    IReadOnlyList<PlayerStatResponse> UpdatedStats);
+
 public enum MatchResult
 {
     Win,
     Loss,
     Draw
 }
-
-public record SubmitMatchResultRequest(
-    MatchResult MatchResult,
-    int Kills,
-    int Deaths,
-    int Assists,
-    int Score);

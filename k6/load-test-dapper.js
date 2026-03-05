@@ -7,32 +7,33 @@ const LIST_LIMIT = Number(__ENV.LIST_LIMIT || "100");
 
 const errorRate = new Rate("dapper_errors");
 const createPlayerDuration = new Trend("dapper_create_player_duration", true);
+const createGameDuration = new Trend("dapper_create_game_duration", true);
+const endGameDuration = new Trend("dapper_end_game_duration", true);
 const listPlayersDuration = new Trend("dapper_list_players_duration", true);
 const getPlayerDuration = new Trend("dapper_get_player_duration", true);
 const getProfileDuration = new Trend("dapper_get_profile_duration", true);
-const submitMatchDuration = new Trend("dapper_submit_match_duration", true);
 
 export const options = {
   scenarios: {
     smoke: {
       executor: "constant-vus",
-      vus: 10,
-      duration: "45s",
+      vus: 5,
+      duration: "30s",
       tags: { scenario: "smoke" },
     },
     load: {
       executor: "ramping-vus",
       startVUs: 0,
       stages: [
-        { duration: "30s", target: 40 },
-        { duration: "2m", target: 40 },
-        { duration: "30s", target: 100 },
-        { duration: "2m", target: 100 },
-        { duration: "30s", target: 150 },
-        { duration: "2m", target: 150 },
-        { duration: "30s", target: 0 },
+        { duration: "20s", target: 20 },
+        { duration: "1m", target: 20 },
+        { duration: "20s", target: 50 },
+        { duration: "1m", target: 50 },
+        { duration: "20s", target: 80 },
+        { duration: "1m", target: 80 },
+        { duration: "20s", target: 0 },
       ],
-      startTime: "50s",
+      startTime: "35s",
       tags: { scenario: "load" },
     },
   },
@@ -81,6 +82,61 @@ function createPlayer() {
   return ok ? res.json() : null;
 }
 
+// POST /dapper/game/create
+function createGame() {
+  const res = http.post(`${BASE_URL}/dapper/game/create`, null, {
+    headers: JSON_HEADERS,
+  });
+  createGameDuration.add(res.timings.duration);
+
+  const ok = check(res, {
+    "create game: status 201": (r) => r.status === 201,
+    "create game: has game id": (r) => {
+      const body = r.json();
+      return body && body.game && body.game.id;
+    },
+  });
+  errorRate.add(!ok);
+
+  return ok ? res.json().game : null;
+}
+
+// POST /dapper/game/end
+function endGame(gameId, playerId) {
+  const payload = JSON.stringify({
+    gameId,
+    results: [
+      {
+        playerId,
+        matchResult: randomMatchResult(),
+        kills: randomInt(0, 30),
+        deaths: randomInt(0, 15),
+        assists: randomInt(0, 20),
+        score: randomInt(100, 5000),
+      },
+    ],
+  });
+
+  const res = http.post(`${BASE_URL}/dapper/game/end`, payload, {
+    headers: JSON_HEADERS,
+  });
+  endGameDuration.add(res.timings.duration);
+
+  const ok = check(res, {
+    "end game: status 200": (r) => r.status === 200,
+    "end game: has updated stats": (r) => {
+      if (r.status !== 200) return false;
+      try {
+        const body = r.json();
+        return body && Array.isArray(body.updatedStats) && body.updatedStats.length > 0;
+      } catch (_) {
+        return false;
+      }
+    },
+  });
+  errorRate.add(!ok);
+}
+
 // GET /dapper/players?limit={LIST_LIMIT}
 function listPlayers() {
   const res = http.get(`${BASE_URL}/dapper/players?limit=${LIST_LIMIT}`);
@@ -119,38 +175,6 @@ function getPlayerProfile(playerId) {
   errorRate.add(!ok);
 }
 
-// POST /dapper/players/{id}/match-results
-function submitMatchResult(playerId) {
-  const payload = JSON.stringify({
-    matchResult: randomMatchResult(),
-    kills: randomInt(0, 30),
-    deaths: randomInt(0, 15),
-    assists: randomInt(0, 20),
-    score: randomInt(100, 5000),
-  });
-
-  const res = http.post(
-    `${BASE_URL}/dapper/players/${playerId}/match-results`,
-    payload,
-    { headers: JSON_HEADERS }
-  );
-  submitMatchDuration.add(res.timings.duration);
-
-  const ok = check(res, {
-    "submit match: status 200": (r) => r.status === 200,
-    "submit match: has rating": (r) => {
-      if (r.status !== 200) return false;
-      try {
-        const body = r.json();
-        return body && body.rating !== undefined;
-      } catch (_) {
-        return false;
-      }
-    },
-  });
-  errorRate.add(!ok);
-}
-
 export default function () {
   // 1. Create player
   const player = createPlayer();
@@ -169,9 +193,12 @@ export default function () {
   getPlayer(player.id);
   sleep(0.1);
 
-  // 4. Submit 3 match results
+  // 4. Create and end 3 games
   for (let i = 0; i < 3; i++) {
-    submitMatchResult(player.id);
+    const game = createGame();
+    if (game) {
+      endGame(game.id, player.id);
+    }
     sleep(0.05);
   }
 

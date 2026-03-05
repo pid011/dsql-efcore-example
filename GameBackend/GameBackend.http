@@ -1,6 +1,51 @@
 @GameBackend_HostAddress = http://localhost:5074
 
-GET {{GameBackend_HostAddress}}/weatherforecast/
-Accept: application/json
+### Create Player (EF Core)
+POST {{GameBackend_HostAddress}}/efcore/players
+Content-Type: application/json
 
-###
+{
+  "name": "Player_{{$timestamp}}"
+}
+
+### Create Game (EF Core)
+POST {{GameBackend_HostAddress}}/efcore/game/create
+
+### End Game (EF Core)
+POST {{GameBackend_HostAddress}}/efcore/game/end
+Content-Type: application/json
+
+{
+  "gameId": "00000000-0000-0000-0000-000000000000",
+  "results": [
+    {
+      "playerId": "00000000-0000-0000-0000-000000000000",
+      "matchResult": "Win",
+      "kills": 10,
+      "deaths": 2,
+      "assists": 5,
+      "score": 2500
+    }
+  ]
+}
+
+### Create Game (Dapper)
+POST {{GameBackend_HostAddress}}/dapper/game/create
+
+### End Game (Dapper)
+POST {{GameBackend_HostAddress}}/dapper/game/end
+Content-Type: application/json
+
+{
+  "gameId": "00000000-0000-0000-0000-000000000000",
+  "results": [
+    {
+      "playerId": "00000000-0000-0000-0000-000000000000",
+      "matchResult": "Win",
+      "kills": 10,
+      "deaths": 2,
+      "assists": 5,
+      "score": 2500
+    }
+  ]
+}
