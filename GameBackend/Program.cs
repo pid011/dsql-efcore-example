@@ -32,5 +32,6 @@ if (app.Environment.IsDevelopment())
 app.UseHttpsRedirection();
 
 EFCoreApi.ConfigureEndpoints(app);
+DapperApi.ConfigureEndpoints(app);
 
 app.Run();

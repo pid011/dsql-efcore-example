@@ -1,35 +1,38 @@
-﻿import http from "k6/http";
+import http from "k6/http";
 import { check, sleep } from "k6";
 import { Rate, Trend } from "k6/metrics";
 
 const BASE_URL = __ENV.BASE_URL || "http://localhost:5074";
+const LIST_LIMIT = Number(__ENV.LIST_LIMIT || "100");
 
 const errorRate = new Rate("errors");
-const createPlayerDuration = new Trend("create_player_duration", true);
-const listPlayersDuration = new Trend("list_players_duration", true);
-const getPlayerDuration = new Trend("get_player_duration", true);
-const getProfileDuration = new Trend("get_profile_duration", true);
-const submitMatchDuration = new Trend("submit_match_duration", true);
+const createPlayerDuration = new Trend("efcore_create_player_duration", true);
+const listPlayersDuration = new Trend("efcore_list_players_duration", true);
+const getPlayerDuration = new Trend("efcore_get_player_duration", true);
+const getProfileDuration = new Trend("efcore_get_profile_duration", true);
+const submitMatchDuration = new Trend("efcore_submit_match_duration", true);
 
 export const options = {
   scenarios: {
     smoke: {
       executor: "constant-vus",
-      vus: 5,
-      duration: "30s",
+      vus: 10,
+      duration: "45s",
       tags: { scenario: "smoke" },
     },
     load: {
       executor: "ramping-vus",
       startVUs: 0,
       stages: [
-        { duration: "30s", target: 20 },
-        { duration: "1m", target: 20 },
-        { duration: "30s", target: 50 },
-        { duration: "1m", target: 50 },
+        { duration: "30s", target: 40 },
+        { duration: "2m", target: 40 },
+        { duration: "30s", target: 100 },
+        { duration: "2m", target: 100 },
+        { duration: "30s", target: 150 },
+        { duration: "2m", target: 150 },
         { duration: "30s", target: 0 },
       ],
-      startTime: "35s",
+      startTime: "50s",
       tags: { scenario: "load" },
     },
   },
@@ -78,9 +81,9 @@ function createPlayer() {
   return ok ? res.json() : null;
 }
 
-// GET /efcore/players
+// GET /efcore/players?limit={LIST_LIMIT}
 function listPlayers() {
-  const res = http.get(`${BASE_URL}/efcore/players`);
+  const res = http.get(`${BASE_URL}/efcore/players?limit=${LIST_LIMIT}`);
   listPlayersDuration.add(res.timings.duration);
 
   const ok = check(res, {
@@ -135,7 +138,15 @@ function submitMatchResult(playerId) {
 
   const ok = check(res, {
     "submit match: status 200": (r) => r.status === 200,
-    "submit match: has rating": (r) => r.json().rating !== undefined,
+    "submit match: has rating": (r) => {
+      if (r.status !== 200) return false;
+      try {
+        const body = r.json();
+        return body && body.rating !== undefined;
+      } catch (_) {
+        return false;
+      }
+    },
   });
   errorRate.add(!ok);
 }
@@ -148,23 +159,23 @@ export default function () {
     return;
   }
 
-  sleep(0.5);
+  sleep(0.2);
 
   // 2. List players
   listPlayers();
-  sleep(0.3);
+  sleep(0.1);
 
   // 3. Get single player
   getPlayer(player.id);
-  sleep(0.3);
+  sleep(0.1);
 
   // 4. Submit 3 match results
   for (let i = 0; i < 3; i++) {
     submitMatchResult(player.id);
-    sleep(0.2);
+    sleep(0.05);
   }
 
   // 5. Get profile (with stats)
   getPlayerProfile(player.id);
-  sleep(0.5);
+  sleep(0.2);
 }

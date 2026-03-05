@@ -37,7 +37,8 @@ Minimal API with the following endpoints:
 | Method | Path | Description |
 |---|---|---|
 | `POST` | `/efcore/players` | Create a player |
-| `GET` | `/efcore/players` | List all players |
+| `POST` | `/efcore/reset` | Reset all player/player_stats data |
+| `GET` | `/efcore/players?limit=100` | List players with optional limit (1~1000) |
 | `GET` | `/efcore/players/{id}` | Get a player by ID |
 | `GET` | `/efcore/players/{id}/profile` | Get player profile with stats |
 | `POST` | `/efcore/players/{id}/match-results` | Submit a match result (updates stats & Elo rating) |
@@ -122,23 +123,27 @@ AWS settings for the AppHost:
 
 ## Load Testing
 
-Load tests use [k6](https://k6.io/) and are located in `k6/load-test.js`.
+Load tests use [k6](https://k6.io/) and are located in `k6/load-test-efcore.js` (EF Core) and `k6/load-test-dapper.js` (Dapper).
 
 ```bash
-k6 run k6/load-test.js
+k6 run -e LIST_LIMIT=100 k6/load-test-efcore.js
+# Dapper API load test
+k6 run -e LIST_LIMIT=100 k6/load-test-dapper.js
 ```
 
 To target a specific server:
 
 ```bash
-k6 run -e BASE_URL=http://localhost:5074 k6/load-test.js
+k6 run -e BASE_URL=http://localhost:5074 -e LIST_LIMIT=100 k6/load-test-efcore.js
+# Dapper API target
+k6 run -e BASE_URL=http://localhost:5074 -e LIST_LIMIT=100 k6/load-test-dapper.js
 ```
 
 The test runs two scenarios:
-- **Smoke** — 5 VUs for 30 seconds
-- **Load** — Ramps from 0 to 50 VUs over 3.5 minutes
+- **Smoke** — 10 VUs for 45 seconds
+- **Load** — Ramps 0→40→100→150 VUs and holds each level (total 8 minutes)
 
-Each iteration creates a player, lists players, fetches a player, submits 3 match results, and retrieves the player profile.
+Each iteration creates a player, lists players (with `LIST_LIMIT`), fetches a player, submits 3 match results, and retrieves the player profile.
 
 ### Test Results
 
