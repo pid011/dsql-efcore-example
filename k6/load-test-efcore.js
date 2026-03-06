@@ -3,13 +3,11 @@ import { check, sleep } from "k6";
 import { Rate, Trend } from "k6/metrics";
 
 const BASE_URL = __ENV.BASE_URL || "http://localhost:5074";
-const LIST_LIMIT = Number(__ENV.LIST_LIMIT || "100");
 
 const errorRate = new Rate("errors");
 const createPlayerDuration = new Trend("efcore_create_player_duration", true);
 const createGameDuration = new Trend("efcore_create_game_duration", true);
 const endGameDuration = new Trend("efcore_end_game_duration", true);
-const listPlayersDuration = new Trend("efcore_list_players_duration", true);
 const getPlayerDuration = new Trend("efcore_get_player_duration", true);
 const getProfileDuration = new Trend("efcore_get_profile_duration", true);
 
@@ -137,20 +135,6 @@ function endGame(gameId, playerId) {
   errorRate.add(!ok);
 }
 
-// GET /efcore/players?limit={LIST_LIMIT}
-function listPlayers() {
-  const res = http.get(`${BASE_URL}/efcore/players?limit=${LIST_LIMIT}`);
-  listPlayersDuration.add(res.timings.duration);
-
-  const ok = check(res, {
-    "list players: status 200": (r) => r.status === 200,
-    "list players: is array": (r) => Array.isArray(r.json()),
-  });
-  errorRate.add(!ok);
-
-  return ok ? res.json() : [];
-}
-
 // GET /efcore/players/{id}
 function getPlayer(playerId) {
   const res = http.get(`${BASE_URL}/efcore/players/${playerId}`);
@@ -185,15 +169,11 @@ export default function () {
 
   sleep(0.2);
 
-  // 2. List players
-  listPlayers();
-  sleep(0.1);
-
-  // 3. Get single player
+  // 2. Get single player
   getPlayer(player.id);
   sleep(0.1);
 
-  // 4. Create and end 3 games
+  // 3. Create and end 3 games
   for (let i = 0; i < 3; i++) {
     const game = createGame();
     if (game) {
@@ -202,7 +182,7 @@ export default function () {
     sleep(0.05);
   }
 
-  // 5. Get profile (with stats)
+  // 4. Get profile (with stats)
   getPlayerProfile(player.id);
   sleep(0.2);
 }
